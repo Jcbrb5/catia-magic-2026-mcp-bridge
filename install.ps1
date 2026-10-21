@@ -8,8 +8,10 @@
     3. Creates mcp-server\.venv and installs the Python MCP server into it.
     4. Registers the server with Claude Code (if the `claude` CLI is on PATH).
 
-    Deploying into C:\Program Files usually needs an elevated (Run as administrator)
-    PowerShell. Close CATIA Magic before running so the plugin jar is not locked.
+    Run from a normal (not elevated) PowerShell. If the CATIA Magic plugins folder is
+    not writable (the usual case under C:\Program Files), only the copy step is run
+    elevated and Windows shows a UAC prompt for it. Close CATIA Magic before running
+    so the plugin jar is not locked.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File .\install.ps1
@@ -134,6 +136,36 @@ function Find-Jdk21 {
     return $null
 }
 
+function Test-DirectoryWritable([string]$Path) {
+    # Probe the nearest existing folder; the target may not exist on first install.
+    $probeDir = $Path
+    while ($probeDir -and -not (Test-Path $probeDir)) {
+        $probeDir = Split-Path $probeDir -Parent
+    }
+    if (-not $probeDir) {
+        return $false
+    }
+    $probe = Join-Path $probeDir ([IO.Path]::GetRandomFileName())
+    try {
+        [IO.File]::WriteAllText($probe, '')
+        Remove-Item -LiteralPath $probe -Force
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+# Replace the deployed plugin with the build output. Kept self-contained so it can be
+# passed to an elevated PowerShell when the plugins folder needs administrator rights.
+$DeployPlugin = {
+    param([string]$Source, [string]$Target)
+    $ErrorActionPreference = 'Stop'
+    New-Item -ItemType Directory -Force -Path $Target | Out-Null
+    Get-ChildItem -LiteralPath $Target -Filter 'cameo-mcp-bridge-*.jar' -ErrorAction SilentlyContinue |
+        Remove-Item -Force
+    Copy-Item -Path (Join-Path $Source '*') -Destination $Target -Recurse -Force
+}
+
 function Find-Python {
     $py = Get-Command py.exe -ErrorAction SilentlyContinue
     if ($py) {
@@ -218,13 +250,26 @@ if (-not $SkipDeploy) {
     }
 
     $targetDir = Join-Path $CameoHome "plugins\$PluginId"
-    try {
-        New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
-        Get-ChildItem -Path $targetDir -Filter 'cameo-mcp-bridge-*.jar' -ErrorAction SilentlyContinue |
-            Remove-Item -Force
-        Copy-Item -Path (Join-Path $distDir '*') -Destination $targetDir -Recurse -Force
-    } catch [System.UnauthorizedAccessException] {
-        throw "No write access to $targetDir. Rerun this script from an elevated PowerShell (Run as administrator)."
+    if (Test-DirectoryWritable $targetDir) {
+        & $DeployPlugin $distDir $targetDir
+    } else {
+        Write-Host 'The CATIA Magic plugins folder needs administrator rights. Approve the UAC prompt to copy the plugin.'
+        $quote = { param([string]$s) "'" + ($s -replace "'", "''") + "'" }
+        $command = "& {$DeployPlugin} $(& $quote $distDir) $(& $quote $targetDir)"
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+        try {
+            $process = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -WindowStyle Hidden `
+                -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded)
+        } catch {
+            throw "Elevation was cancelled or failed, so the plugin was not deployed to $targetDir. Rerun and approve the UAC prompt, or copy $distDir to $targetDir manually."
+        }
+        if ($process.ExitCode -ne 0) {
+            throw "Elevated copy to $targetDir failed (exit code $($process.ExitCode))."
+        }
+    }
+    $deployedJar = Get-ChildItem -LiteralPath $distDir -Filter 'cameo-mcp-bridge-*.jar' | Select-Object -First 1
+    if (-not $deployedJar -or -not (Test-Path (Join-Path $targetDir $deployedJar.Name))) {
+        throw "Plugin jar is missing from $targetDir after the copy."
     }
     Write-Host "Plugin deployed to: $targetDir"
 }
@@ -283,5 +328,9 @@ Write-Host '=== Installation complete ===' -ForegroundColor Green
 Write-Host ''
 Write-Host 'Next steps:'
 Write-Host '  1. Start CATIA Magic and open a project'
-Write-Host '  2. Start a new Claude Code session'
-Write-Host "  3. Say: 'Check cameo status'"
+Write-Host '  2. Check the plugin is up:'
+Write-Host '       Invoke-RestMethod http://127.0.0.1:18740/api/v1/status'
+Write-Host '  3. Start a new Claude Code session'
+Write-Host "  4. Say: 'Check cameo status'"
+Write-Host ''
+Write-Host 'See docs\windows-install.md for verification and troubleshooting.'

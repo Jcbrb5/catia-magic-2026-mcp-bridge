@@ -14,7 +14,8 @@ Fork of upstream 2.3.5 targeting CATIA Magic 2026x on Windows.
 
 ### Added
 
-- `install.ps1` Windows installer with CATIA Magic and JDK 21 auto-detection
+- `install.ps1` Windows installer with CATIA Magic and JDK 21 auto-detection. It runs from a normal PowerShell window and asks for elevation (UAC) only when copying the plugin into a protected install folder, then checks that the jar landed
+- `docs/windows-install.md` step-by-step Windows guide: prerequisites, install, verification, Claude Code / Claude Desktop / WSL setup, updating, port change, uninstall and troubleshooting
 - `.gitattributes` line-ending rules for clean Windows checkouts
 
 ## 2.3.5 - 2026-05-05

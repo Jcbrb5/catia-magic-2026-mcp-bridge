@@ -80,7 +80,7 @@ All write operations are session-wrapped for undo/redo support. Read operations 
   - `DiagramPresentationElement.layout(boolean)` replaced by `DiagramLayouter`
   - `isDiagramWindowOpen()` / `isDiagramWindowActive()` removed (approximated via the project's active diagram)
 - **Java 21 build.** The plugin compiles with `--release 21` against every jar in the Cameo `lib/` and `plugins/` folders.
-- **Windows installer.** `install.ps1` finds CATIA Magic and a JDK 21, builds and deploys the plugin, sets up the Python server, and registers it with Claude Code.
+- **Windows installer.** `install.ps1` finds CATIA Magic and a JDK 21, builds and deploys the plugin (asking for elevation only for the copy into `Program Files`), sets up the Python server, and registers it with Claude Code. See [docs/windows-install.md](docs/windows-install.md).
 - **Line endings.** `.gitattributes` keeps the repo LF and checks out `.ps1`/`.bat` as CRLF, so Windows clones stay clean.
 - `mcp` Python dependency pinned to `<2`.
 
@@ -97,7 +97,9 @@ All write operations are session-wrapped for undo/redo support. Read operations 
 
 ### Quick Install (Windows)
 
-Close CATIA Magic first. Then, in PowerShell (use **Run as administrator** if CATIA Magic is under `C:\Program Files`):
+The full step-by-step guide, with verification, client setup (Claude Code, Claude Desktop, WSL), updating, uninstalling and troubleshooting, is in [docs/windows-install.md](docs/windows-install.md).
+
+Close CATIA Magic first. Then, in a normal (not elevated) PowerShell window:
 
 ```powershell
 git clone https://github.com/Jcbrb5/cameo-mcp-bridge.git
@@ -116,7 +118,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 `
 `install.ps1`:
 1. Finds CATIA Magic (a folder with `lib\md.jar` under `Program Files`, `C:\` or `D:\`) and a JDK 21 (`JDK21_HOME`, `JAVA_HOME`, then common vendor folders)
 2. Builds the plugin with `plugin\gradlew.bat clean assemblePlugin`
-3. Deploys it to `<CameoHome>\plugins\com.claude.cameo.bridge\`, removing older plugin jars
+3. Deploys it to `<CameoHome>\plugins\com.claude.cameo.bridge\`, removing older plugin jars. If that folder needs administrator rights, only this copy step runs elevated (one UAC prompt)
 4. Creates `mcp-server\.venv\` and installs the Python MCP server into it
 5. Registers the server with Claude Code as `cameo-bridge` when the `claude` CLI is on PATH
 
@@ -178,6 +180,12 @@ On Windows, the interpreter path is typically `.venv\\Scripts\\python.exe`.
 For other MCP clients, configure stdio transport with the venv interpreter and command `-m cameo_mcp.server`.
 
 **5. Restart CATIA Magic**, open a project, and verify:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:18740/api/v1/status
+```
+
+Then, in your MCP client:
 
 ```
 > Check cameo status
@@ -606,6 +614,7 @@ cameo-mcp-bridge/
         runtime.py
         service.py
     pyproject.toml
+  plugins/cameo-mcp-bridge/            # Codex plugin wrapper (skills + .mcp.json)
   plugin/                              # Java Cameo plugin
     src/com/claude/cameo/bridge/
       CameoMCPBridgePlugin.java        # Plugin entry point
@@ -636,9 +645,12 @@ cameo-mcp-bridge/
         EdtDispatcher.java             # EDT dispatch with session management
         ElementSerializer.java         # Element to JSON serialization
         JsonHelper.java                # JSON parsing utilities
+        Cameo2026Compat.java           # Shims for APIs changed in CATIA Magic 2026x
     plugin.xml                         # Cameo plugin descriptor
     build.gradle                       # Gradle build config
-  install.sh                           # One-step installer
+  install.ps1                          # Windows installer (CATIA Magic 2026x)
+  install.sh                           # Git Bash / WSL / Linux installer
+  docs/windows-install.md              # Windows installation guide
   LICENSE
   README.md
 ```
@@ -647,9 +659,9 @@ cameo-mcp-bridge/
 
 ### Building the Plugin
 
-```bash
+```powershell
 cd plugin
-./gradlew assemblePlugin -PcameoHome="/path/to/CatiaMagic"
+.\gradlew.bat assemblePlugin -PcameoHome="C:/Program Files/Magic Cyber Systems Engineer" -PjdkHome="C:/path/to/jdk-21"
 ```
 
 The output goes to `plugin/build/plugin-dist/com.claude.cameo.bridge/`.
