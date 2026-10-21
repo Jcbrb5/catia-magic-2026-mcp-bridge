@@ -30,8 +30,8 @@ Open a normal PowerShell window (not "Run as administrator") and clone the repo 
 
 ```powershell
 cd $HOME
-git clone https://github.com/Jcbrb5/cameo-mcp-bridge.git
-cd cameo-mcp-bridge
+git clone https://github.com/Jcbrb5/catia-magic-2026-mcp-bridge.git
+cd catia-magic-2026-mcp-bridge
 ```
 
 Keep this folder after installing. The MCP server runs from `mcp-server\.venv` inside it.
@@ -104,7 +104,7 @@ claude mcp list
 To register by hand (replace the path with your repo folder):
 
 ```powershell
-claude mcp add cameo-bridge --scope user -- "C:\Users\<you>\cameo-mcp-bridge\mcp-server\.venv\Scripts\python.exe" -m cameo_mcp.server
+claude mcp add cameo-bridge --scope user -- "C:\Users\<you>\catia-magic-2026-mcp-bridge\mcp-server\.venv\Scripts\python.exe" -m cameo_mcp.server
 ```
 
 Start a new Claude Code session and say `Check cameo status`. The `cameo_status` tool reports the plugin version and whether the Python server and plugin are compatible.
@@ -115,7 +115,7 @@ The plugin listens on the Windows loopback address. A Python server started insi
 
 ```bash
 claude mcp add cameo-bridge --scope user -- \
-  "/mnt/c/Users/<you>/cameo-mcp-bridge/mcp-server/.venv/Scripts/python.exe" -m cameo_mcp.server
+  "/mnt/c/Users/<you>/catia-magic-2026-mcp-bridge/mcp-server/.venv/Scripts/python.exe" -m cameo_mcp.server
 ```
 
 Another option is to set `networkingMode=mirrored` under `[wsl2]` in `%USERPROFILE%\.wslconfig`, run `wsl --shutdown`, and then use a Linux venv.
@@ -128,7 +128,7 @@ Add this to `%APPDATA%\Claude\claude_desktop_config.json`, then restart Claude D
 {
   "mcpServers": {
     "cameo-bridge": {
-      "command": "C:\\Users\\<you>\\cameo-mcp-bridge\\mcp-server\\.venv\\Scripts\\python.exe",
+      "command": "C:\\Users\\<you>\\catia-magic-2026-mcp-bridge\\mcp-server\\.venv\\Scripts\\python.exe",
       "args": ["-m", "cameo_mcp.server"]
     }
   }
@@ -142,7 +142,7 @@ Use stdio transport. Command: `<repo>\mcp-server\.venv\Scripts\python.exe`. Argu
 ## Updating
 
 ```powershell
-cd $HOME\cameo-mcp-bridge
+cd $HOME\catia-magic-2026-mcp-bridge
 git pull
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```

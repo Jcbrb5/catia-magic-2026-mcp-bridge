@@ -1,6 +1,6 @@
 # Cameo MCP Bridge
 
-> **CATIA Magic 2026x / Windows fork.** This is a fork of [ajhcs/cameo-mcp-bridge](https://github.com/ajhcs/cameo-mcp-bridge) ported to CATIA Magic 2026x (Java 21), with a PowerShell installer for Windows. It targets 2026x only; for 2024x use the upstream repo. See [What this fork changes](#what-this-fork-changes).
+> **CATIA Magic 2026x / Windows fork** (`catia-magic-2026-mcp-bridge`). This is a fork of [ajhcs/cameo-mcp-bridge](https://github.com/ajhcs/cameo-mcp-bridge) ported to CATIA Magic 2026x (Java 21), with a PowerShell installer for Windows. It targets 2026x only; for 2024x use the upstream repo. See [What this fork changes](#what-this-fork-changes).
 
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that connects AI coding assistants to **CATIA Magic / Cameo Systems Modeler** -- the industry-standard MBSE tool for SysML and UML modeling.
 
@@ -102,8 +102,8 @@ The full step-by-step guide, with verification, client setup (Claude Code, Claud
 Close CATIA Magic first. Then, in a normal (not elevated) PowerShell window:
 
 ```powershell
-git clone https://github.com/Jcbrb5/cameo-mcp-bridge.git
-cd cameo-mcp-bridge
+git clone https://github.com/Jcbrb5/catia-magic-2026-mcp-bridge.git
+cd catia-magic-2026-mcp-bridge
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 

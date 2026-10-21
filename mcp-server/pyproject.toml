@@ -20,9 +20,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Jcbrb5/cameo-mcp-bridge"
-Repository = "https://github.com/Jcbrb5/cameo-mcp-bridge"
-Issues = "https://github.com/Jcbrb5/cameo-mcp-bridge/issues"
+Homepage = "https://github.com/Jcbrb5/catia-magic-2026-mcp-bridge"
+Repository = "https://github.com/Jcbrb5/catia-magic-2026-mcp-bridge"
+Issues = "https://github.com/Jcbrb5/catia-magic-2026-mcp-bridge/issues"
 
 [project.scripts]
 cameo-mcp = "cameo_mcp.server:main"
