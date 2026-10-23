@@ -1,5 +1,6 @@
 package com.claude.cameo.bridge.handlers;
 
+import com.claude.cameo.bridge.BridgeAuth;
 import com.claude.cameo.bridge.HttpBridgeServer;
 import com.claude.cameo.bridge.util.JsonHelper;
 import com.nomagic.magicdraw.core.Application;
@@ -58,6 +59,11 @@ public class MacroHandler implements HttpHandler {
             }
 
             if ("POST".equals(method) && path.equals("/api/v1/macros/execute")) {
+                if (!BridgeAuth.macrosEnabled()) {
+                    HttpBridgeServer.sendError(exchange, 403, "MACROS_DISABLED",
+                            "Macro execution is disabled by -D" + BridgeAuth.MACROS_PROPERTY + "=false");
+                    return;
+                }
                 handleExecute(exchange);
                 return;
             }

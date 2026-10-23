@@ -12,6 +12,8 @@ cmd.exe /c gradlew.bat test -PcameoHome="C:/Program Files/Magic Cyber Systems En
 
 Use an explicit JDK 21 path. The machine default `java` may not be compatible with the plugin build.
 
+`gradlew.bat test` runs the JUnit suites under `plugin/src/test/java`, including `BridgeAuthTest` and `RequestGuardTest` for the token and Host guard. These two classes only need the JDK, gson and JUnit, so they also compile without the CATIA Magic jars.
+
 ## Python Tests
 
 From the repo's `mcp-server` folder:
@@ -28,7 +30,9 @@ From the repo's `plugin` folder:
 cmd.exe /c gradlew.bat deploy -PcameoHome="C:/Program Files/Magic Cyber Systems Engineer" -PjdkHome="C:/Program Files/Eclipse Adoptium/jdk-21.0.5.11-hotspot"
 ```
 
-Restart CATIA Magic after deploying. Do not trust newly added endpoints until `/api/v1/status` and `/api/v1/capabilities` report the rebuilt plugin.
+Restart CATIA Magic after deploying. Do not trust newly added endpoints until `/api/v1/status` and `/api/v1/capabilities` report the rebuilt plugin. For a guided patch with backup and rollback, use `install.ps1 -PluginOnly` / `install.ps1 -Rollback` from the repo root instead (see `docs/windows-install.md`).
+
+Live validation scripts call the Python client, so they send the token automatically as long as `%USERPROFILE%\.cameo-mcp-bridge\token` exists or `CAMEO_BRIDGE_TOKEN` is set.
 
 The deploy task removes stale `cameo-mcp-bridge-*.jar` files from the installed plugin directory before copying the current jar. If CATIA Magic is still running, the current jar may be locked; close CATIA, rerun deploy, then reopen CATIA. When redeploying without a version bump, also verify the CATIA `javaw.exe` start time is later than the installed jar `LastWriteTime`; `/api/v1/status` can still report the same plugin version while the process is running older in-memory bytecode.
 

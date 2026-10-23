@@ -77,7 +77,7 @@ tasks.withType(Test).configureEach {
 
 jar {
     archiveBaseName = 'cameo-mcp-bridge'
-    archiveVersion = '2.3.5'
+    archiveVersion = '2.3.6'
     destinationDirectory = layout.buildDirectory.dir('libs')
 }
 

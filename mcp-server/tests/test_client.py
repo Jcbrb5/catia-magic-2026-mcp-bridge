@@ -1,9 +1,13 @@
 import base64
+import os
+import tempfile
 import unittest
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import httpx
 from PIL import Image
 
 from cameo_mcp import client
@@ -12,8 +16,151 @@ from cameo_mcp import client
 def reset_client_state() -> None:
     client._shared_client = None
     client._shared_client_base_url = None
+    client._shared_client_token = None
     client._capabilities_cache = None
     client._capabilities_cache_base_url = None
+
+
+def no_token_env(tmp_dir: str) -> dict[str, str]:
+    """Environment overrides that keep a real token on the dev machine out of a test."""
+    return {
+        client.BRIDGE_TOKEN_FILE_ENV: os.path.join(tmp_dir, "missing-token"),
+        client.BRIDGE_TOKEN_ENV: "",
+    }
+
+
+class BridgeTokenTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        reset_client_state()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp_dir = self._tmp.name
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+        reset_client_state()
+
+    def _write_token(self, content: str, name: str = "token") -> str:
+        path = os.path.join(self.tmp_dir, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        return path
+
+    def test_env_token_wins_over_file(self) -> None:
+        path = self._write_token("from-file\n")
+        with patch.dict(os.environ, {client.BRIDGE_TOKEN_ENV: " from-env ", client.BRIDGE_TOKEN_FILE_ENV: path}):
+            self.assertEqual("from-env", client._bridge_token())
+
+    def test_file_env_overrides_default_path(self) -> None:
+        path = self._write_token("from-file\n")
+        with patch.dict(os.environ, {client.BRIDGE_TOKEN_ENV: "", client.BRIDGE_TOKEN_FILE_ENV: path}):
+            self.assertEqual(Path(path), client._token_file_path())
+            self.assertEqual("from-file", client._bridge_token())
+
+    def test_default_path_is_under_home(self) -> None:
+        with patch.dict(os.environ, {client.BRIDGE_TOKEN_FILE_ENV: ""}):
+            self.assertEqual(Path.home() / ".cameo-mcp-bridge" / "token", client._token_file_path())
+
+    def test_token_file_bom_and_crlf_are_stripped(self) -> None:
+        path = self._write_token("\ufeffabc123\r\n")
+        with patch.dict(os.environ, {client.BRIDGE_TOKEN_ENV: "", client.BRIDGE_TOKEN_FILE_ENV: path}):
+            self.assertEqual("abc123", client._bridge_token())
+
+    def test_missing_or_empty_file_yields_none(self) -> None:
+        with patch.dict(os.environ, no_token_env(self.tmp_dir)):
+            self.assertIsNone(client._bridge_token())
+        empty = self._write_token("\n", name="empty")
+        with patch.dict(os.environ, {client.BRIDGE_TOKEN_ENV: "", client.BRIDGE_TOKEN_FILE_ENV: empty}):
+            self.assertIsNone(client._bridge_token())
+
+    def test_shared_client_sends_header_and_rebuilds_when_token_changes(self) -> None:
+        path = self._write_token("first\n")
+        with patch.dict(os.environ, {client.BRIDGE_TOKEN_ENV: "", client.BRIDGE_TOKEN_FILE_ENV: path}):
+            first = client._get_client()
+            self.assertEqual("first", first.headers[client.BRIDGE_TOKEN_HEADER])
+            self.assertIs(first, client._get_client())
+
+            self._write_token("second\n")
+            second = client._get_client()
+            self.assertIsNot(first, second)
+            self.assertEqual("second", second.headers[client.BRIDGE_TOKEN_HEADER])
+
+    def test_shared_client_omits_header_without_token(self) -> None:
+        with patch.dict(os.environ, no_token_env(self.tmp_dir)):
+            http_client = client._get_client()
+            self.assertNotIn(client.BRIDGE_TOKEN_HEADER, http_client.headers)
+
+    async def test_unauthorized_error_names_token_file(self) -> None:
+        env = no_token_env(self.tmp_dir)
+        request = httpx.Request("GET", "http://127.0.0.1:18740/api/v1/project")
+        response = httpx.Response(
+            401,
+            json={"error": True, "code": "UNAUTHORIZED", "message": "Missing X-Cameo-Bridge-Token header"},
+            request=request,
+        )
+
+        class _Client:
+            is_closed = False
+
+            async def request(self, *args, **kwargs):
+                raise httpx.HTTPStatusError("401", request=request, response=response)
+
+        with patch.dict(os.environ, env), patch("cameo_mcp.client._get_client", return_value=_Client()):
+            with self.assertRaises(RuntimeError) as raised:
+                await client._request_raw("GET", "/project")
+
+        message = str(raised.exception)
+        self.assertIn("HTTP 401", message)
+        self.assertIn(env[client.BRIDGE_TOKEN_FILE_ENV], message)
+        self.assertIn(client.BRIDGE_TOKEN_ENV, message)
+        self.assertIn("restart CATIA Magic", message)
+
+    def test_http_error_messages_switch_on_code(self) -> None:
+        with patch.dict(os.environ, no_token_env(self.tmp_dir)):
+            macros = client._describe_http_error(403, {"code": "MACROS_DISABLED", "message": "off"})
+            self.assertIn("cameo.mcp.macros", macros)
+            self.assertNotIn(client.BRIDGE_TOKEN_ENV, macros)
+
+            host = client._describe_http_error(403, {"code": "BAD_HOST", "message": "nope"})
+            self.assertIn("Host header", host)
+
+            generic = client._describe_http_error(500, {"code": "INTERNAL_ERROR", "message": "boom"})
+            self.assertEqual("CameoMCPBridge returned HTTP 500: {'code': 'INTERNAL_ERROR', 'message': 'boom'}", generic)
+
+            text = client._describe_http_error(502, "Bad Gateway")
+            self.assertEqual("CameoMCPBridge returned HTTP 502: Bad Gateway", text)
+
+    async def test_probe_bridge_sends_token_header(self) -> None:
+        path = self._write_token("probe-token\n")
+        captured: dict[str, Any] = {}
+
+        class _ProbeResponse:
+            status_code = 200
+            content = b"{}"
+            text = "{}"
+
+            def json(self) -> dict[str, Any]:
+                return {"pluginVersion": client.BRIDGE_PLUGIN_VERSION}
+
+        class _ProbeClient:
+            def __init__(self, *args, **kwargs) -> None:
+                captured.update(kwargs)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            async def get(self, path: str) -> _ProbeResponse:
+                return _ProbeResponse()
+
+        with patch.dict(os.environ, {client.BRIDGE_TOKEN_ENV: "", client.BRIDGE_TOKEN_FILE_ENV: path}), patch(
+            "cameo_mcp.client.httpx.AsyncClient", _ProbeClient
+        ):
+            result = await client.probe_bridge()
+
+        self.assertTrue(result["reachable"])
+        self.assertEqual({client.BRIDGE_TOKEN_HEADER: "probe-token"}, captured["headers"])
 
 
 def _make_base64_png(width: int = 20, height: int = 10) -> str:

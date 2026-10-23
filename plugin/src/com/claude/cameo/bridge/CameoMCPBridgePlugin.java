@@ -13,11 +13,13 @@ public class CameoMCPBridgePlugin extends Plugin {
     public void init() {
         int port = Integer.parseInt(System.getProperty("cameo.mcp.port", "18740"));
         try {
-            server = new HttpBridgeServer(port);
+            BridgeAuth auth = BridgeAuth.load();
+            server = new HttpBridgeServer(port, auth);
             server.start();
-            Application.getInstance().getGUILog().log(
-                "CameoMCPBridge: HTTP server started on port " + port);
-            LOG.info("CameoMCPBridge: HTTP server started on port " + port);
+            String message = "CameoMCPBridge: HTTP server started on port " + port
+                + " (" + auth.describeForLog() + ")";
+            Application.getInstance().getGUILog().log(message);
+            LOG.info(message);
         } catch (Exception e) {
             LOG.severe("CameoMCPBridge: Failed to start HTTP server: " + e.getMessage());
             Application.getInstance().getGUILog().showError(

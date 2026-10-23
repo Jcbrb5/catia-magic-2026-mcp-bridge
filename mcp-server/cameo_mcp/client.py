@@ -7,12 +7,13 @@ import os
 import re
 from collections import Counter
 from io import BytesIO
+from pathlib import Path
 from typing import Any, Optional
 
 import httpx
 from PIL import Image
 
-BRIDGE_PLUGIN_VERSION = "2.3.5"
+BRIDGE_PLUGIN_VERSION = "2.3.6"
 BRIDGE_API_VERSION = "v1"
 BRIDGE_HANDSHAKE_VERSION = "1"
 
@@ -259,23 +260,73 @@ def _base_url() -> str:
     return f"http://127.0.0.1:{port}/api/v1"
 
 
+# Shared-secret header the plugin requires on every route except status/capabilities.
+BRIDGE_TOKEN_HEADER = "X-Cameo-Bridge-Token"
+BRIDGE_TOKEN_ENV = "CAMEO_BRIDGE_TOKEN"
+BRIDGE_TOKEN_FILE_ENV = "CAMEO_BRIDGE_TOKEN_FILE"
+
+
+def _token_file_path() -> Path:
+    """Path of the token file the plugin writes on first start.
+
+    ``CAMEO_BRIDGE_TOKEN_FILE`` overrides the default ``~/.cameo-mcp-bridge/token``
+    (``%USERPROFILE%`` on Windows), which matches the plugin's ``user.home`` default.
+    """
+    configured = os.environ.get(BRIDGE_TOKEN_FILE_ENV, "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / ".cameo-mcp-bridge" / "token"
+
+
+def _bridge_token() -> Optional[str]:
+    """Resolve the shared token: ``CAMEO_BRIDGE_TOKEN`` first, then the token file.
+
+    Returns ``None`` when neither is set so the caller can send no header and let the
+    plugin's 401 message explain what is missing. Read on every request so a token file
+    created after this process started (first CATIA Magic start with the new plugin) is
+    picked up without restarting the MCP server.
+    """
+    from_env = os.environ.get(BRIDGE_TOKEN_ENV, "").strip()
+    if from_env:
+        return from_env
+    path = _token_file_path()
+    try:
+        # utf-8-sig drops the BOM that PowerShell's Set-Content -Encoding UTF8 writes.
+        value = path.read_text(encoding="utf-8-sig").strip()
+    except (OSError, ValueError):
+        return None
+    return value or None
+
+
+def _auth_headers(token: Optional[str]) -> dict[str, str]:
+    return {BRIDGE_TOKEN_HEADER: token} if token else {}
+
+
 # Module-level singleton client for connection pooling and keepalive
 _shared_client: Optional[httpx.AsyncClient] = None
 _shared_client_base_url: Optional[str] = None
+_shared_client_token: Optional[str] = None
 _capabilities_cache: Optional[dict[str, Any]] = None
 _capabilities_cache_base_url: Optional[str] = None
 
 
 def _get_client() -> httpx.AsyncClient:
-    global _shared_client, _shared_client_base_url
+    global _shared_client, _shared_client_base_url, _shared_client_token
     base_url = _base_url()
+    token = _bridge_token()
     if (
         _shared_client is None
         or _shared_client.is_closed
         or _shared_client_base_url != base_url
+        or _shared_client_token != token
     ):
-        _shared_client = httpx.AsyncClient(base_url=base_url, timeout=30.0)
+        _shared_client = httpx.AsyncClient(
+            base_url=base_url,
+            timeout=30.0,
+            headers=_auth_headers(token),
+        )
         _shared_client_base_url = base_url
+        _shared_client_token = token
     return _shared_client
 
 
@@ -370,9 +421,44 @@ async def _request_raw(
             detail = exc.response.json()
         except Exception:
             detail = exc.response.text
-        raise RuntimeError(
-            f"CameoMCPBridge returned HTTP {exc.response.status_code}: {detail}"
-        ) from None
+        raise RuntimeError(_describe_http_error(exc.response.status_code, detail)) from None
+
+
+def _describe_http_error(status_code: int, detail: Any) -> str:
+    """Turn a plugin error payload into an actionable message.
+
+    The plugin's guard answers 401 ``UNAUTHORIZED`` (token missing or wrong), 403
+    ``BAD_HOST`` (Host header is not loopback) and 403 ``MACROS_DISABLED``. Both 403
+    codes share a status, so the JSON ``code`` field decides the message.
+    """
+    code = detail.get("code") if isinstance(detail, dict) else None
+    base = f"CameoMCPBridge returned HTTP {status_code}: {detail}"
+    if code == "UNAUTHORIZED":
+        token_file = _token_file_path()
+        return (
+            f"{base}\n"
+            "The plugin requires the shared token in the "
+            f"{BRIDGE_TOKEN_HEADER} header. The MCP server reads it from "
+            f"{BRIDGE_TOKEN_ENV}, else from the token file at {token_file} "
+            f"(override the path with {BRIDGE_TOKEN_FILE_ENV}). CATIA Magic writes that "
+            "file on its first start with plugin 2.3.6 or newer; if the file is missing, "
+            "restart CATIA Magic and check the Notification Window for the token path. "
+            "If CATIA Magic runs as a different Windows user (for example "
+            "'Run as administrator'), point the MCP server at that user's token file."
+        )
+    if code == "BAD_HOST":
+        return (
+            f"{base}\n"
+            "The plugin only accepts requests whose Host header is 127.0.0.1 or localhost. "
+            "Do not reach the bridge through a proxy, port forward or alternate hostname."
+        )
+    if code == "MACROS_DISABLED":
+        return (
+            f"{base}\n"
+            "Macro execution is disabled in this CATIA Magic instance by the JVM option "
+            "-Dcameo.mcp.macros=false. Remove that option and restart CATIA Magic to enable it."
+        )
+    return base
 
 
 async def _ensure_compatible_bridge(force_refresh: bool = False) -> dict[str, Any]:
@@ -445,7 +531,11 @@ async def probe_bridge() -> dict[str, Any]:
     results: list[dict[str, Any]] = []
 
     try:
-        async with httpx.AsyncClient(base_url=root_url, timeout=5.0) as probe_client:
+        async with httpx.AsyncClient(
+            base_url=root_url,
+            timeout=5.0,
+            headers=_auth_headers(_bridge_token()),
+        ) as probe_client:
             for kind, path in probes:
                 entry: dict[str, Any] = {"kind": kind, "path": path}
                 try:
