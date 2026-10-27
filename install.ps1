@@ -23,7 +23,7 @@
 #>
 [CmdletBinding()]
 param(
-    # CATIA Magic install root (the folder that contains lib\md.jar). Auto-detected if omitted.
+    # CATIA Magic install root (the folder that contains lib\md.jar or lib\com.nomagic.magicdraw.foundation-*.jar). Auto-detected if omitted.
     [string]$CameoHome = $env:CAMEO_HOME,
     # JDK 21 home used to run Gradle and compile the plugin. Auto-detected if omitted.
     [string]$JdkHome,
@@ -34,12 +34,29 @@ param(
     # Skip creating the venv and installing the Python MCP server.
     [switch]$SkipPython,
     # Skip registering the MCP server with Claude Code.
-    [switch]$SkipClaudeRegister
+    [switch]$SkipClaudeRegister,
+    # Patch mode: rebuild and redeploy only the plugin. Implies -SkipPython and -SkipClaudeRegister.
+    [switch]$PluginOnly,
+    # Restore the plugin folder from the newest backup taken by a previous run. Implies -SkipBuild,
+    # -SkipPython and -SkipClaudeRegister.
+    [switch]$Rollback
 )
 
 $ErrorActionPreference = 'Stop'
 $RepoRoot = $PSScriptRoot
 $PluginId = 'com.claude.cameo.bridge'
+# Backups live outside <CameoHome>\plugins so CATIA Magic never loads a stale copy as a second plugin.
+$BackupRoot = Join-Path $env:LOCALAPPDATA 'cameo-mcp-bridge\backups'
+
+if ($PluginOnly) {
+    $SkipPython = $true
+    $SkipClaudeRegister = $true
+}
+if ($Rollback) {
+    $SkipBuild = $true
+    $SkipPython = $true
+    $SkipClaudeRegister = $true
+}
 
 function Write-Step([string]$Message) {
     Write-Host ''
@@ -65,7 +82,14 @@ function Invoke-Native {
 }
 
 function Test-CameoHome([string]$Path) {
-    return $Path -and (Test-Path (Join-Path $Path 'lib\md.jar'))
+    if (-not $Path) {
+        return $false
+    }
+    $lib = Join-Path $Path 'lib'
+    # Older releases ship lib\md.jar; CATIA Magic 2026x splits the core into versioned
+    # com.nomagic.magicdraw.*.jar files (the same jars build.gradle compiles against).
+    return (Test-Path (Join-Path $lib 'md.jar')) -or
+        [bool](Get-ChildItem -Path $lib -Filter 'com.nomagic.magicdraw.foundation-*.jar' -ErrorAction SilentlyContinue)
 }
 
 function Find-CameoHome {
@@ -184,12 +208,12 @@ Write-Host '=== Cameo MCP Bridge Installer (CATIA Magic 2026x / Windows) ==='
 if (-not $SkipBuild -or -not $SkipDeploy) {
     if ($CameoHome) {
         if (-not (Test-CameoHome $CameoHome)) {
-            throw "CameoHome '$CameoHome' does not contain lib\md.jar. Point -CameoHome at the CATIA Magic install root."
+            throw "CameoHome '$CameoHome' does not contain lib\md.jar or lib\com.nomagic.magicdraw.foundation-*.jar. Point -CameoHome at the CATIA Magic install root."
         }
     } else {
         $installs = Find-CameoHome
         if ($installs.Count -eq 0) {
-            throw 'Could not find a CATIA Magic install (a folder containing lib\md.jar). Pass -CameoHome "C:\Path\To\CATIA Magic".'
+            throw 'Could not find a CATIA Magic install (a folder containing lib\md.jar or lib\com.nomagic.magicdraw.foundation-*.jar). Pass -CameoHome "C:\Path\To\CATIA Magic".'
         }
         if ($installs.Count -gt 1) {
             Write-Host 'Found several CATIA Magic installs:'
@@ -238,40 +262,71 @@ if (-not $SkipBuild) {
 
 # --- Deploy -----------------------------------------------------------------------
 if (-not $SkipDeploy) {
-    Write-Step 'Deploying plugin to CATIA Magic'
-    if (-not (Test-Path (Join-Path $distDir 'plugin.xml'))) {
-        throw "Build output not found at $distDir. Run without -SkipBuild."
+    $targetDir = Join-Path $CameoHome "plugins\$PluginId"
+
+    if ($Rollback) {
+        Write-Step 'Rolling back plugin from backup'
+        $backup = Get-ChildItem -LiteralPath $BackupRoot -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending | Select-Object -First 1
+        if (-not $backup -or -not (Test-Path (Join-Path $backup.FullName 'plugin.xml'))) {
+            throw "No plugin backup found under $BackupRoot. Nothing to roll back to."
+        }
+        $sourceDir = $backup.FullName
+        Write-Host "Restoring: $sourceDir"
+    } else {
+        Write-Step 'Deploying plugin to CATIA Magic'
+        if (-not (Test-Path (Join-Path $distDir 'plugin.xml'))) {
+            throw "Build output not found at $distDir. Run without -SkipBuild."
+        }
+        $sourceDir = $distDir
     }
 
-    $running = Get-Process -ErrorAction SilentlyContinue |
-        Where-Object { $_.Path -and $_.Path.StartsWith($CameoHome, [StringComparison]::OrdinalIgnoreCase) }
-    if ($running) {
+    # CATIA Magic locks the plugin jar while it runs, and only loads plugins at startup.
+    $findRunning = {
+        Get-Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.Path -and $_.Path.StartsWith($CameoHome, [StringComparison]::OrdinalIgnoreCase) }
+    }
+    $running = & $findRunning
+    if ($running -and [Environment]::UserInteractive) {
+        while ($running) {
+            Write-Host 'CATIA Magic is running from this install. Save your work and close it.' -ForegroundColor Yellow
+            Read-Host 'Press Enter once CATIA Magic is closed (Ctrl+C aborts)' | Out-Null
+            $running = & $findRunning
+        }
+    } elseif ($running) {
         throw 'CATIA Magic is running from this install. Close it so the plugin jar is not locked, then rerun.'
     }
 
-    $targetDir = Join-Path $CameoHome "plugins\$PluginId"
+    # Keep the previous plugin so -Rollback can restore it. Reading Program Files needs no elevation.
+    if (-not $Rollback -and (Test-Path (Join-Path $targetDir 'plugin.xml'))) {
+        $backupDir = Join-Path $BackupRoot (Get-Date -Format 'yyyyMMdd-HHmmss')
+        New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
+        Copy-Item -Path (Join-Path $targetDir '*') -Destination $backupDir -Recurse -Force
+        Write-Host "Previous plugin backed up to: $backupDir"
+    }
+
     if (Test-DirectoryWritable $targetDir) {
-        & $DeployPlugin $distDir $targetDir
+        & $DeployPlugin $sourceDir $targetDir
     } else {
         Write-Host 'The CATIA Magic plugins folder needs administrator rights. Approve the UAC prompt to copy the plugin.'
         $quote = { param([string]$s) "'" + ($s -replace "'", "''") + "'" }
-        $command = "& {$DeployPlugin} $(& $quote $distDir) $(& $quote $targetDir)"
+        $command = "& {$DeployPlugin} $(& $quote $sourceDir) $(& $quote $targetDir)"
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
         try {
             $process = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -WindowStyle Hidden `
                 -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded)
         } catch {
-            throw "Elevation was cancelled or failed, so the plugin was not deployed to $targetDir. Rerun and approve the UAC prompt, or copy $distDir to $targetDir manually."
+            throw "Elevation was cancelled or failed, so the plugin was not deployed to $targetDir. Rerun and approve the UAC prompt, or copy $sourceDir to $targetDir manually."
         }
         if ($process.ExitCode -ne 0) {
             throw "Elevated copy to $targetDir failed (exit code $($process.ExitCode))."
         }
     }
-    $deployedJar = Get-ChildItem -LiteralPath $distDir -Filter 'cameo-mcp-bridge-*.jar' | Select-Object -First 1
+    $deployedJar = Get-ChildItem -LiteralPath $sourceDir -Filter 'cameo-mcp-bridge-*.jar' | Select-Object -First 1
     if (-not $deployedJar -or -not (Test-Path (Join-Path $targetDir $deployedJar.Name))) {
         throw "Plugin jar is missing from $targetDir after the copy."
     }
-    Write-Host "Plugin deployed to: $targetDir"
+    Write-Host "Plugin deployed to: $targetDir ($($deployedJar.Name))"
 }
 
 # --- Python MCP server --------------------------------------------------------------
@@ -324,13 +379,25 @@ if (-not $SkipClaudeRegister) {
 }
 
 Write-Host ''
-Write-Host '=== Installation complete ===' -ForegroundColor Green
+if ($Rollback) {
+    Write-Host '=== Rollback complete ===' -ForegroundColor Green
+} elseif ($PluginOnly) {
+    Write-Host '=== Plugin patch complete ===' -ForegroundColor Green
+} else {
+    Write-Host '=== Installation complete ===' -ForegroundColor Green
+}
 Write-Host ''
 Write-Host 'Next steps:'
 Write-Host '  1. Start CATIA Magic and open a project'
-Write-Host '  2. Check the plugin is up:'
+Write-Host '  2. Check the plugin is up (this route needs no token):'
 Write-Host '       Invoke-RestMethod http://127.0.0.1:18740/api/v1/status'
+Write-Host '     The plugin writes its token to $HOME\.cameo-mcp-bridge\token on first start;'
+Write-Host '     the MCP server reads it from there automatically.'
 Write-Host '  3. Start a new Claude Code session'
 Write-Host "  4. Say: 'Check cameo status'"
+if (-not $Rollback) {
+    Write-Host ''
+    Write-Host "  To undo this deploy: powershell -ExecutionPolicy Bypass -File .\install.ps1 -Rollback"
+}
 Write-Host ''
 Write-Host 'See docs\windows-install.md for verification and troubleshooting.'

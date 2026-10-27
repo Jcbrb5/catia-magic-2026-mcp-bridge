@@ -116,7 +116,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 `
 ```
 
 `install.ps1`:
-1. Finds CATIA Magic (a folder with `lib\md.jar` under `Program Files`, `C:\` or `D:\`) and a JDK 21 (`JDK21_HOME`, `JAVA_HOME`, then common vendor folders)
+1. Finds CATIA Magic (a folder with `lib\md.jar` or `lib\com.nomagic.magicdraw.foundation-*.jar` under `Program Files`, `C:\` or `D:\`) and a JDK 21 (`JDK21_HOME`, `JAVA_HOME`, then common vendor folders)
 2. Builds the plugin with `plugin\gradlew.bat clean assemblePlugin`
 3. Deploys it to `<CameoHome>\plugins\com.claude.cameo.bridge\`, removing older plugin jars. If that folder needs administrator rights, only this copy step runs elevated (one UAC prompt)
 4. Creates `mcp-server\.venv\` and installs the Python MCP server into it
@@ -205,6 +205,13 @@ OOSEM workflows. These tools build named artifact recipes, workflow guidance,
 conformance checks, semantic validation, and compact review packets on top of
 the low-level bridge.
 
+## What's New In 2.3.6
+
+- **Authentication.** Every route except `/status` and `/capabilities` now requires the `X-Cameo-Bridge-Token` header. The plugin generates the token on first start and stores it in `<home>/.cameo-mcp-bridge/token`; the Python server reads the same file, so no configuration is needed on a single-user machine.
+- **Host check.** Requests whose `Host` header is not `127.0.0.1`, `localhost` or `[::1]` are rejected with `403 BAD_HOST`, which blocks DNS-rebinding pages from reaching the bridge.
+- **Macro kill switch.** `-Dcameo.mcp.macros=false` on the CATIA Magic JVM disables `cameo_execute_macro` (`403 MACROS_DISABLED`).
+- **Patch workflow.** `install.ps1 -PluginOnly` rebuilds and redeploys only the plugin, waits for you to close CATIA Magic, and backs up the previous plugin folder; `install.ps1 -Rollback` restores it. See [docs/windows-install.md](docs/windows-install.md#updating-and-patching).
+
 ## What's New In 2.3.5
 
 - Native Relation Map tools for create/configure, criteria templates, presentation inspection, graph readback, render/verify, snapshot diffing, and explicit refresh.
@@ -219,6 +226,8 @@ the low-level bridge.
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `CAMEO_BRIDGE_PORT` | `18740` | HTTP port for the bridge (must match both sides) |
+| `CAMEO_BRIDGE_TOKEN` | unset | Shared token sent as `X-Cameo-Bridge-Token`. Overrides the token file on the Python side; on the plugin side it overrides the file as well |
+| `CAMEO_BRIDGE_TOKEN_FILE` | `~/.cameo-mcp-bridge/token` | Where the Python server reads the token the plugin generated. Set it when the MCP server runs under a different account or OS (for example a Linux venv in WSL reading `/mnt/c/Users/<you>/.cameo-mcp-bridge/token`) |
 | `CAMEO_HOME` | auto-detected (`install.ps1`) / `C:/Program Files/Magic Cyber Systems Engineer` (Gradle) | CATIA Magic install root |
 | `JDK21_HOME` | unset | JDK 21 home used by the installers and Gradle |
 | `JAVA21_HOME` | unset | Alternate JDK 21 home override |
@@ -231,6 +240,13 @@ The Java plugin reads the port from system property `cameo.mcp.port` (default `1
 ```
 
 And set `CAMEO_BRIDGE_PORT=18741` in your environment before launching Claude Code.
+
+Other JVM system properties the plugin reads:
+
+| System property | Default | Description |
+|-----------------|---------|-------------|
+| `cameo.mcp.token.file` | `<user.home>/.cameo-mcp-bridge/token` | Where the plugin reads, or on first start writes, the shared token. The `CAMEO_BRIDGE_TOKEN` environment variable of the CATIA Magic process takes precedence over the file |
+| `cameo.mcp.macros` | `true` | Set to `false` to disable `POST /api/v1/macros/execute` entirely |
 
 For local health checks, the plugin now responds on both `/api/v1/status` and the legacy `/status` alias. The same applies to `/api/v1/capabilities` and `/capabilities`.
 
@@ -592,12 +608,13 @@ The bridge builds models correctly -- elements, relationships, directionality, s
 
 This bridge is designed for **local development use only**.
 
-- The HTTP server binds to `127.0.0.1` (localhost only) -- not accessible from the network
-- There is **no authentication** on the HTTP endpoints
-- The `cameo_execute_macro` tool executes **arbitrary Groovy code** inside the Cameo JVM with full access to the filesystem, network, and classloader
-- CORS headers are set to `*` (wildcard) -- any webpage in a local browser could theoretically make requests to the bridge
+- The HTTP server binds to `127.0.0.1` (localhost only) -- not accessible from the network, and there is no TLS.
+- Every route except `/status` and `/capabilities` (plugin metadata only) requires the shared token in the `X-Cameo-Bridge-Token` header. The plugin generates a 256-bit random token on first start and writes it to `<user.home>/.cameo-mcp-bridge/token`; the token value is never logged or returned over HTTP. Anyone who can read that file, or run code as the same Windows user, can use the bridge.
+- The `Host` header must be `127.0.0.1`, `localhost` or `[::1]`, otherwise the request is rejected with `403 BAD_HOST`. This defeats DNS rebinding.
+- No `Access-Control-Allow-Origin` header is ever sent, so a web page cannot read responses, and the custom token header forces a CORS preflight that fails.
+- The `cameo_execute_macro` tool executes **arbitrary Groovy code** inside the Cameo JVM with full access to the filesystem, network, and classloader, as the user running CATIA Magic. Disable it with `-Dcameo.mcp.macros=false` on machines that do not need it.
 
-**Do not** expose the bridge port to the network, run it on shared/multi-user machines without additional access controls, or use it in production environments without adding authentication.
+**Do not** expose the bridge port to the network, share the token file, or use it in production environments.
 
 ## Project Structure
 
@@ -619,6 +636,8 @@ cameo-mcp-bridge/
     src/com/claude/cameo/bridge/
       CameoMCPBridgePlugin.java        # Plugin entry point
       HttpBridgeServer.java            # Embedded HTTP server + routing
+      BridgeAuth.java                  # Shared-token resolution (env, file, generated)
+      RequestGuard.java                # Host + token filter applied to every route
       handlers/
         ProjectHandler.java            # Project info, save
         ElementQueryHandler.java       # Element search, get, relationships

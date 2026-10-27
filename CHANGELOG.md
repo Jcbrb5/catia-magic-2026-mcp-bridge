@@ -2,7 +2,21 @@
 
 ## Unreleased - CATIA Magic 2026x / Windows fork
 
-Fork of upstream 2.3.5 targeting CATIA Magic 2026x on Windows.
+Fork of upstream 2.3.5 targeting CATIA Magic 2026x on Windows. Bridge version is now `2.3.6` on both sides (exact match required).
+
+### Security
+
+- The plugin now requires a shared token in the `X-Cameo-Bridge-Token` header on every route except `/status` and `/capabilities` (and their `/api/v1` aliases). `BridgeAuth` resolves it from `CAMEO_BRIDGE_TOKEN`, then `-Dcameo.mcp.token.file`, then `<user.home>/.cameo-mcp-bridge/token`, generating a 32-byte random token on first start. The token value is never logged or returned over HTTP; the status payload gains an `auth` block with the header name, source and file path
+- `RequestGuard` filter on every HTTP context rejects requests whose `Host` header is not `127.0.0.1`, `localhost` or `[::1]` (`403 BAD_HOST`, DNS-rebinding defense) and unauthenticated requests (`401 UNAUTHORIZED`)
+- `-Dcameo.mcp.macros=false` disables `POST /api/v1/macros/execute` (`403 MACROS_DISABLED`)
+- README no longer claims CORS is `*`; the plugin never sends `Access-Control-Allow-Origin`
+- `BridgeAuth`, `RequestGuard` and their JUnit tests were compiled and run against a plain JDK 21 (with a stub for `HttpBridgeServer`) and smoke-tested over HTTP on the authoring machine; the edits to `HttpBridgeServer`, `CameoMCPBridgePlugin` and `MacroHandler` need the CATIA Magic jars and get their first compile on the Windows box via `gradlew.bat test assemblePlugin`
+
+### Added
+
+- `install.ps1 -PluginOnly` patch mode (build + deploy only), a wait-for-close prompt instead of a hard failure when CATIA Magic is running, a timestamped backup of the installed plugin under `%LOCALAPPDATA%\cameo-mcp-bridge\backups`, and `install.ps1 -Rollback` to restore the newest backup
+- Python client sends the token from `CAMEO_BRIDGE_TOKEN` or `CAMEO_BRIDGE_TOKEN_FILE` (default `~/.cameo-mcp-bridge/token`), re-reads it on each request, and turns `UNAUTHORIZED`, `BAD_HOST` and `MACROS_DISABLED` responses into actionable messages
+- Unit tests: `BridgeAuthTest`, `RequestGuardTest` (JUnit) and `BridgeTokenTests` (Python)
 
 ### Changed
 
