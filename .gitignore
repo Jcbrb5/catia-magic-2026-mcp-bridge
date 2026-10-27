@@ -22,3 +22,4 @@ Thumbs.db
 # Local scratch artifacts
 tmp/
 mcp-server/validation-output/
+docs/windows-patch-prompt.md

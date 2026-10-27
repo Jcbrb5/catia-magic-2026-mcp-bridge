@@ -17,7 +17,6 @@ Fork of upstream 2.3.5 targeting CATIA Magic 2026x on Windows. Bridge version is
 - `install.ps1 -PluginOnly` patch mode (build + deploy only), a wait-for-close prompt instead of a hard failure when CATIA Magic is running, a timestamped backup of the installed plugin under `%LOCALAPPDATA%\cameo-mcp-bridge\backups`, and `install.ps1 -Rollback` to restore the newest backup
 - Python client sends the token from `CAMEO_BRIDGE_TOKEN` or `CAMEO_BRIDGE_TOKEN_FILE` (default `~/.cameo-mcp-bridge/token`), re-reads it on each request, and turns `UNAUTHORIZED`, `BAD_HOST` and `MACROS_DISABLED` responses into actionable messages
 - Unit tests: `BridgeAuthTest`, `RequestGuardTest` (JUnit) and `BridgeTokenTests` (Python)
-- `docs/windows-patch-prompt.md`: a prompt for Claude Code on the CATIA Magic machine to apply and verify a plugin patch
 
 ### Changed
 
