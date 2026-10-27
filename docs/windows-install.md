@@ -15,7 +15,7 @@ Install these first. The commands in the right column let you check each one in 
 
 | Requirement | Notes | Check |
 |-------------|-------|-------|
-| CATIA Magic 2026x | Default install folder is `C:\Program Files\Magic Cyber Systems Engineer`. 2024x and older are not supported by this fork; use [upstream](https://github.com/ajhcs/cameo-mcp-bridge). | `Test-Path "C:\Program Files\Magic Cyber Systems Engineer\lib\md.jar"` |
+| CATIA Magic 2026x | Default install folder is `C:\Program Files\Magic Cyber Systems Engineer`. 2024x and older are not supported by this fork; use [upstream](https://github.com/ajhcs/cameo-mcp-bridge). | `Test-Path "C:\Program Files\Magic Cyber Systems Engineer\lib\com.nomagic.magicdraw.foundation-*.jar"` |
 | JDK 21 | Must be a full JDK (it needs `javac`). The Java runtime that ships with CATIA Magic cannot compile the plugin. [Eclipse Temurin 21](https://adoptium.net/temurin/releases/?version=21) (MSI installer) works. | `& "C:\Program Files\Eclipse Adoptium\jdk-21*\bin\javac.exe" -version` |
 | Python 3.10 or later | Install from [python.org](https://www.python.org/downloads/windows/). Tick **Add python.exe to PATH**. The Microsoft Store `python.exe` alias is not used. | `py -3 --version` |
 | Git | Or download the repo as a ZIP from GitHub instead. | `git --version` |
@@ -46,7 +46,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 
 The installer:
 
-1. Finds the CATIA Magic install. It looks for a folder that contains `lib\md.jar` under `Program Files`, `Program Files (x86)`, `C:\` and `D:\`.
+1. Finds the CATIA Magic install. It looks for a folder that contains `lib\md.jar` or `lib\com.nomagic.magicdraw.foundation-*.jar` (2026x) under `Program Files`, `Program Files (x86)`, `C:\` and `D:\`.
 2. Finds a JDK 21. It checks `JDK21_HOME`, `JAVA21_HOME` and `JAVA_HOME`, then common vendor folders (Eclipse Adoptium, Java, Microsoft, Amazon Corretto, Zulu, BellSoft).
 3. Builds the plugin with `plugin\gradlew.bat clean assemblePlugin`.
 4. Copies the plugin into `<CATIA Magic>\plugins\com.claude.cameo.bridge\` and removes older plugin jars. If that folder needs administrator rights (the usual case under `C:\Program Files`), Windows shows a UAC prompt for this copy step only.
@@ -65,7 +65,7 @@ Installer options:
 
 | Option | Effect |
 |--------|--------|
-| `-CameoHome <path>` | CATIA Magic install folder (the one that contains `lib\md.jar`). Defaults to `CAMEO_HOME`, then auto-detection. |
+| `-CameoHome <path>` | CATIA Magic install folder (the one that contains `lib\md.jar` or `lib\com.nomagic.magicdraw.foundation-*.jar`). Defaults to `CAMEO_HOME`, then auto-detection. |
 | `-JdkHome <path>` | JDK 21 folder. Defaults to auto-detection. |
 | `-SkipBuild` | Do not build. Deploy the existing build in `plugin\build\plugin-dist`. |
 | `-SkipDeploy` | Do not copy the plugin into CATIA Magic. |
@@ -217,7 +217,7 @@ The default port is `18740`. To use another port:
 | Symptom | Cause and fix |
 |---------|---------------|
 | `running scripts is disabled on this system` | Start the installer with `powershell -ExecutionPolicy Bypass -File .\install.ps1` as shown above. |
-| `Could not find a CATIA Magic install` or `Found several CATIA Magic installs` | Pass `-CameoHome` with the folder that contains `lib\md.jar`. |
+| `Could not find a CATIA Magic install` or `Found several CATIA Magic installs` | Pass `-CameoHome` with the folder that contains `lib\md.jar` or `lib\com.nomagic.magicdraw.foundation-*.jar`. |
 | `A JDK 21 is required to build the plugin` | Install a JDK 21 and pass `-JdkHome`, or set `JDK21_HOME`. A JDK 17 or 25 does not work. |
 | Gradle cannot download `gradle-8.5-bin.zip` | You are behind a proxy. Add `systemProp.https.proxyHost` and `systemProp.https.proxyPort` to `%USERPROFILE%\.gradle\gradle.properties`. |
 | Build fails with `cannot find symbol` or `package ... does not exist` | `-CameoHome` points at a CATIA Magic version other than 2026x, or at the wrong folder. |

@@ -116,7 +116,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 `
 ```
 
 `install.ps1`:
-1. Finds CATIA Magic (a folder with `lib\md.jar` under `Program Files`, `C:\` or `D:\`) and a JDK 21 (`JDK21_HOME`, `JAVA_HOME`, then common vendor folders)
+1. Finds CATIA Magic (a folder with `lib\md.jar` or `lib\com.nomagic.magicdraw.foundation-*.jar` under `Program Files`, `C:\` or `D:\`) and a JDK 21 (`JDK21_HOME`, `JAVA_HOME`, then common vendor folders)
 2. Builds the plugin with `plugin\gradlew.bat clean assemblePlugin`
 3. Deploys it to `<CameoHome>\plugins\com.claude.cameo.bridge\`, removing older plugin jars. If that folder needs administrator rights, only this copy step runs elevated (one UAC prompt)
 4. Creates `mcp-server\.venv\` and installs the Python MCP server into it

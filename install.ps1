@@ -23,7 +23,7 @@
 #>
 [CmdletBinding()]
 param(
-    # CATIA Magic install root (the folder that contains lib\md.jar). Auto-detected if omitted.
+    # CATIA Magic install root (the folder that contains lib\md.jar or lib\com.nomagic.magicdraw.foundation-*.jar). Auto-detected if omitted.
     [string]$CameoHome = $env:CAMEO_HOME,
     # JDK 21 home used to run Gradle and compile the plugin. Auto-detected if omitted.
     [string]$JdkHome,
@@ -82,7 +82,14 @@ function Invoke-Native {
 }
 
 function Test-CameoHome([string]$Path) {
-    return $Path -and (Test-Path (Join-Path $Path 'lib\md.jar'))
+    if (-not $Path) {
+        return $false
+    }
+    $lib = Join-Path $Path 'lib'
+    # Older releases ship lib\md.jar; CATIA Magic 2026x splits the core into versioned
+    # com.nomagic.magicdraw.*.jar files (the same jars build.gradle compiles against).
+    return (Test-Path (Join-Path $lib 'md.jar')) -or
+        [bool](Get-ChildItem -Path $lib -Filter 'com.nomagic.magicdraw.foundation-*.jar' -ErrorAction SilentlyContinue)
 }
 
 function Find-CameoHome {
@@ -201,12 +208,12 @@ Write-Host '=== Cameo MCP Bridge Installer (CATIA Magic 2026x / Windows) ==='
 if (-not $SkipBuild -or -not $SkipDeploy) {
     if ($CameoHome) {
         if (-not (Test-CameoHome $CameoHome)) {
-            throw "CameoHome '$CameoHome' does not contain lib\md.jar. Point -CameoHome at the CATIA Magic install root."
+            throw "CameoHome '$CameoHome' does not contain lib\md.jar or lib\com.nomagic.magicdraw.foundation-*.jar. Point -CameoHome at the CATIA Magic install root."
         }
     } else {
         $installs = Find-CameoHome
         if ($installs.Count -eq 0) {
-            throw 'Could not find a CATIA Magic install (a folder containing lib\md.jar). Pass -CameoHome "C:\Path\To\CATIA Magic".'
+            throw 'Could not find a CATIA Magic install (a folder containing lib\md.jar or lib\com.nomagic.magicdraw.foundation-*.jar). Pass -CameoHome "C:\Path\To\CATIA Magic".'
         }
         if ($installs.Count -gt 1) {
             Write-Host 'Found several CATIA Magic installs:'
